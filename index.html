@@ -19,56 +19,31 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect } = React;
 
-        // API Key is provided by the execution environment
+        // ★★★ 이 부분에 API 키를 정확히 넣어주세요 ★★★
         const apiKey = "AIzaSyBxP5wkb061NXVeSa1vThbG3zfACKOm_GA"; 
 
         const PASSAGE = `Nearly everything has to go through your mouth to get to the rest of you, from food and air to bacteria and viruses. A healthy mouth can help your body get what it needs and prevent it from harm — with adequate space for air to travel to your lungs, and healthy teeth and gums that prevent harmful microorganisms from entering your bloodstream. From the moment you are created, oral health affects every aspect of your life. What happens in the mouth is usually just the tip of the iceberg and a reflection of what is happening in other parts of the body. Poor oral health can be a cause of a disease that affects the entire body. The microorganisms in an unhealthy mouth can enter the bloodstream and travel anywhere in the body, posing serious health risks.`;
 
-        // Utility: Fetch with Exponential Backoff
-        async function fetchWithRetry(url, options, retries = 5) {
-            const delays = [1000, 2000, 4000, 8000, 16000];
-            for (let i = 0; i < retries; i++) {
-                try {
-                    const response = await fetch(url, options);
-                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                    return await response.json();
-                } catch (error) {
-                    if (i === retries - 1) throw error;
-                    await new Promise(res => setTimeout(res, delays[i]));
-                }
-            }
-        }
-
         const App = () => {
             const [student, setStudent] = useState({ id: '', name: '' });
-            const [appState, setAppState] = useState('LOGIN'); // LOGIN, LOADING, QUIZ, RESULT, ERROR
+            const [appState, setAppState] = useState('LOGIN');
             const [questions, setQuestions] = useState([]);
             const [currentQIndex, setCurrentQIndex] = useState(0);
             const [userAnswers, setUserAnswers] = useState([]);
-            const [history, setHistory] = useState([]); // Array of scores
-            const [pastQuestionsLog, setPastQuestionsLog] = useState([]); // To prevent duplicates
+            const [history, setHistory] = useState([]);
             const [errorMsg, setErrorMsg] = useState("");
 
             const generateQuestions = async () => {
                 setAppState('LOADING');
                 setErrorMsg("");
                 
-                const prompt = `
-                    다음 영어 지문을 바탕으로 고등학생 수준의 객관식 문제 10개를 만들어주세요.
-                    
-                    [지문]
-                    ${PASSAGE}
-                    
-                    [조건]
-                    1. 문제 유형은 '내용 일치/불일치', '주제 찾기', '어휘', '어법'이 골고루 섞이도록 10문제를 출제하세요.
-                    2. 각 문제는 4개의 보기를 가져야 합니다.
-                    3. 다음은 이전에 출제되었던 문제들의 텍스트입니다. 이 내용들과 "절대로" 겹치지 않게 완전히 새로운 관점, 새로운 어휘, 새로운 문법 포인트, 새로운 형식으로 질문과 보기를 구성하세요.
-                    [이전 문제 목록]: ${pastQuestionsLog.join(" | ")}
-                `;
+                const prompt = `영어 지문 기반 10문제 생성. JSON 형식으로만 응답. 유형: 내용, 주제, 어휘, 어법 골고루. 4지선다. 지문: ${PASSAGE}`;
 
+                // 가장 안정적인 gemini-1.5-flash 모델 사용
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+                
                 const payload = {
                     contents: [{ parts: [{ text: prompt }] }],
                     generationConfig: {
@@ -81,11 +56,11 @@
                                     items: {
                                         type: "OBJECT",
                                         properties: {
-                                            type: { type: "STRING", description: "문제 유형 (내용, 주제, 어휘, 어법 중 하나)" },
-                                            question: { type: "STRING", description: "문제 텍스트" },
-                                            options: { type: "ARRAY", items: { type: "STRING" }, description: "4개의 보기" },
-                                            answerIndex: { type: "INTEGER", description: "정답 인덱스 (0~3)" },
-                                            explanation: { type: "STRING", description: "정답인 이유와 오답인 이유에 대한 상세한 해설" }
+                                            type: { type: "STRING" },
+                                            question: { type: "STRING" },
+                                            options: { type: "ARRAY", items: { type: "STRING" } },
+                                            answerIndex: { type: "INTEGER" },
+                                            explanation: { type: "STRING" }
                                         },
                                         required: ["type", "question", "options", "answerIndex", "explanation"]
                                     }
@@ -97,32 +72,28 @@
                 };
 
                 try {
-                    const data = await fetchWithRetry(url, {
+                    const response = await fetch(url, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
 
-                    const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-                    if (!responseText) throw new Error("API 응답이 비어있습니다.");
-                    
-                    const parsed = JSON.parse(responseText);
-                    if (!parsed.questions || parsed.questions.length !== 10) {
-                         throw new Error("10문제가 올바르게 생성되지 않았습니다.");
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error?.message || "API 호출 실패");
                     }
 
+                    const data = await response.json();
+                    const responseText = data.candidates[0].content.parts[0].text;
+                    const parsed = JSON.parse(responseText);
+                    
                     setQuestions(parsed.questions);
                     setCurrentQIndex(0);
                     setUserAnswers([]);
-                    
-                    // Add new questions to log to prevent future duplication
-                    const newQLog = parsed.questions.map(q => q.question);
-                    setPastQuestionsLog(prev => [...prev, ...newQLog]);
-                    
                     setAppState('QUIZ');
                 } catch (err) {
                     console.error(err);
-                    setErrorMsg("문제 생성 중 오류가 발생했습니다. 다시 시도해주세요.");
+                    setErrorMsg("API 키가 잘못되었거나 서버 응답에 문제가 있습니다: " + err.message);
                     setAppState('ERROR');
                 }
             };
@@ -130,7 +101,7 @@
             const handleLogin = (e) => {
                 e.preventDefault();
                 if (student.id.trim() === '' || student.name.trim() === '') {
-                    alert("학번과 이름을 모두 입력해주세요.");
+                    alert("학번과 이름을 입력해주세요.");
                     return;
                 }
                 generateQuestions();
@@ -139,145 +110,77 @@
             const handleAnswerSelect = (index) => {
                 const newAnswers = [...userAnswers, index];
                 setUserAnswers(newAnswers);
-
                 if (currentQIndex < questions.length - 1) {
                     setCurrentQIndex(prev => prev + 1);
                 } else {
-                    finishQuiz(newAnswers);
+                    let score = 0;
+                    questions.forEach((q, idx) => { if (q.answerIndex === newAnswers[idx]) score += 10; });
+                    setHistory(prev => [...prev, score]);
+                    setAppState('RESULT');
                 }
             };
 
-            const finishQuiz = (finalAnswers) => {
-                let score = 0;
-                questions.forEach((q, idx) => {
-                    if (q.answerIndex === finalAnswers[idx]) score += 10;
-                });
-                setHistory(prev => [...prev, score]);
-                setAppState('RESULT');
-            };
-
-            // Calculate STAD Score
             const getStadStats = () => {
                 const currentScore = history[history.length - 1] || 0;
-                if (history.length < 2) {
-                    return { canCalculate: false, currentScore, baseScore: 0, improvement: 0, stadScore: 0 };
-                }
-
-                // Calculate base score from previous attempts (average)
-                const previousScores = history.slice(0, history.length - 1);
-                const sum = previousScores.reduce((acc, val) => acc + val, 0);
-                const baseScore = Math.round(sum / previousScores.length);
-                
+                if (history.length < 2) return { canCalculate: false, currentScore };
+                const previousScores = history.slice(0, -1);
+                const baseScore = Math.round(previousScores.reduce((a, b) => a + b, 0) / previousScores.length);
                 const diff = currentScore - baseScore;
-                let stadScore = 0;
-
-                if (currentScore === 100) {
-                    stadScore = 30;
-                } else if (diff > 10) {
-                    stadScore = 30;
-                } else if (diff >= 0) {
-                    stadScore = 20;
-                } else if (diff >= -10) {
-                    stadScore = 10;
-                } else {
-                    stadScore = 0;
-                }
-
+                let stadScore = currentScore === 100 || diff > 10 ? 30 : diff >= 0 ? 20 : diff >= -10 ? 10 : 0;
                 return { canCalculate: true, currentScore, baseScore, diff, stadScore };
             };
 
-            // Render Views
-            if (appState === 'LOGIN') {
-                return (
-                    <div className="min-h-screen flex items-center justify-center p-4">
-                        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md fade-in">
-                            <h1 className="text-3xl font-bold text-center text-blue-600 mb-2">STAD 퀴즈 학습</h1>
-                            <p className="text-center text-gray-500 mb-8">지문을 읽고 문제를 풀며 실력을 향상시키세요.</p>
-                            <form onSubmit={handleLogin} className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">학번</label>
-                                    <input type="text" placeholder="예: 10101" className="w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition" 
-                                        value={student.id} onChange={(e) => setStudent({...student, id: e.target.value})} />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">이름</label>
-                                    <input type="text" placeholder="예: 홍길동" className="w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition" 
-                                        value={student.name} onChange={(e) => setStudent({...student, name: e.target.value})} />
-                                </div>
-                                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition mt-4 shadow-lg">
-                                    시작하기 <i className="fas fa-arrow-right ml-2"></i>
-                                </button>
-                            </form>
-                        </div>
+            if (appState === 'LOGIN') return (
+                <div className="min-h-screen flex items-center justify-center p-4">
+                    <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md fade-in text-center">
+                        <h1 className="text-3xl font-bold text-blue-600 mb-6">STAD 퀴즈 학습</h1>
+                        <form onSubmit={handleLogin} className="space-y-4">
+                            <input type="text" placeholder="학번 (예: 10101)" className="w-full px-4 py-3 rounded-lg border" value={student.id} onChange={(e) => setStudent({...student, id: e.target.value})} />
+                            <input type="text" placeholder="이름" className="w-full px-4 py-3 rounded-lg border" value={student.name} onChange={(e) => setStudent({...student, name: e.target.value})} />
+                            <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg">시작하기</button>
+                        </form>
                     </div>
-                );
-            }
+                </div>
+            );
 
-            if (appState === 'LOADING') {
-                return (
-                    <div className="min-h-screen flex flex-col items-center justify-center p-4">
-                        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-600 mb-4"></div>
-                        <h2 className="text-xl font-bold text-gray-700">AI가 퀴즈를 생성하고 있습니다...</h2>
-                        <p className="text-gray-500 mt-2 text-center">이전과 중복되지 않는 새로운 문제를<br/>분석하여 만들고 있습니다.</p>
-                    </div>
-                );
-            }
+            if (appState === 'LOADING') return (
+                <div className="min-h-screen flex flex-col items-center justify-center p-4">
+                    <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-600 mb-4"></div>
+                    <h2 className="text-xl font-bold">AI 퀴즈 생성 중...</h2>
+                </div>
+            );
 
-            if (appState === 'ERROR') {
-                return (
-                    <div className="min-h-screen flex flex-col items-center justify-center p-4">
-                        <div className="bg-red-100 text-red-700 p-6 rounded-xl max-w-md w-full text-center fade-in">
-                            <i className="fas fa-exclamation-triangle text-4xl mb-4"></i>
-                            <h2 className="text-xl font-bold mb-2">오류 발생</h2>
-                            <p className="mb-6">{errorMsg}</p>
-                            <button onClick={generateQuestions} className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-lg font-bold transition">
-                                다시 시도
-                            </button>
-                        </div>
+            if (appState === 'ERROR') return (
+                <div className="min-h-screen flex flex-col items-center justify-center p-4">
+                    <div className="bg-red-50 text-red-700 p-8 rounded-2xl border border-red-200 text-center shadow-lg">
+                        <i className="fas fa-exclamation-circle text-5xl mb-4 text-red-500"></i>
+                        <h2 className="text-2xl font-bold mb-4">오류가 발생했습니다</h2>
+                        <p className="mb-6 whitespace-pre-wrap">{errorMsg}</p>
+                        <button onClick={() => setAppState('LOGIN')} className="bg-red-600 text-white px-8 py-3 rounded-lg font-bold">다시 시도</button>
                     </div>
-                );
-            }
+                </div>
+            );
 
             if (appState === 'QUIZ') {
                 const q = questions[currentQIndex];
                 return (
-                    <div className="min-h-screen bg-gray-100 p-4 md:p-8 flex flex-col items-center">
-                        <div className="w-full max-w-4xl bg-white rounded-2xl shadow-lg overflow-hidden fade-in flex flex-col">
-                            {/* Header */}
-                            <div className="bg-blue-600 p-4 text-white flex justify-between items-center">
-                                <div className="font-bold"><i className="fas fa-user-graduate mr-2"></i>{student.id} {student.name}</div>
-                                <div className="font-bold">문제 {currentQIndex + 1} / 10</div>
+                    <div className="min-h-screen bg-gray-100 p-4 flex flex-col items-center">
+                        <div className="w-full max-w-4xl bg-white rounded-2xl shadow-lg overflow-hidden flex flex-col h-[90vh]">
+                            <div className="bg-blue-600 p-4 text-white flex justify-between font-bold">
+                                <span>{student.id} {student.name}</span>
+                                <span>문제 {currentQIndex + 1} / 10</span>
                             </div>
-                            
-                            <div className="p-6 md:p-8 flex-1 grid grid-cols-1 md:grid-cols-2 gap-8">
-                                {/* Passage Section */}
-                                <div className="bg-gray-50 p-6 rounded-xl border">
-                                    <h3 className="font-bold text-gray-700 mb-4 border-b pb-2"><i className="fas fa-book-open mr-2"></i>지문</h3>
-                                    <p className="text-gray-800 leading-relaxed text-lg whitespace-pre-wrap">{PASSAGE}</p>
-                                </div>
-
-                                {/* Question Section */}
-                                <div className="flex flex-col justify-center">
-                                    <div className="inline-block bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-bold mb-4 w-max">
-                                        유형: {q.type}
-                                    </div>
-                                    <h2 className="text-xl font-bold text-gray-800 mb-6">{currentQIndex + 1}. {q.question}</h2>
-                                    
+                            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-y-auto">
+                                <div className="bg-gray-50 p-4 rounded-lg border text-lg leading-relaxed">{PASSAGE}</div>
+                                <div>
+                                    <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-bold mb-2 w-max">{q.type}</div>
+                                    <h2 className="text-xl font-bold mb-6">{q.question}</h2>
                                     <div className="space-y-3">
                                         {q.options.map((opt, idx) => (
-                                            <button 
-                                                key={idx}
-                                                onClick={() => handleAnswerSelect(idx)}
-                                                className="w-full text-left p-4 rounded-xl border-2 border-gray-200 hover:border-blue-500 hover:bg-blue-50 transition font-medium text-gray-700"
-                                            >
-                                                <span className="inline-block w-8 h-8 bg-gray-200 text-center leading-8 rounded-full mr-3 text-gray-600 font-bold">{idx + 1}</span>
-                                                {opt}
+                                            <button key={idx} onClick={() => handleAnswerSelect(idx)} className="w-full text-left p-4 rounded-xl border-2 hover:border-blue-500 hover:bg-blue-50 transition">
+                                                <span className="font-bold mr-2">{idx + 1}.</span> {opt}
                                             </button>
                                         ))}
-                                    </div>
-                                    <div className="mt-8 p-4 bg-yellow-50 text-yellow-800 rounded-lg text-sm flex items-start">
-                                        <i className="fas fa-info-circle mt-1 mr-2"></i>
-                                        <span>답을 선택하면 다음 문제로 즉시 넘어갑니다. (취소 및 되돌아가기 불가)</span>
                                     </div>
                                 </div>
                             </div>
@@ -288,120 +191,39 @@
 
             if (appState === 'RESULT') {
                 const stats = getStadStats();
-                const currentScore = history[history.length - 1];
-
                 return (
-                    <div className="min-h-screen bg-gray-100 p-4 md:p-8 pb-20">
-                        <div className="max-w-4xl mx-auto space-y-6 fade-in">
-                            
-                            {/* Profile & Action Header */}
-                            <div className="flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-2xl shadow">
-                                <div className="text-xl font-bold text-gray-800 mb-4 md:mb-0">
-                                    <i className="fas fa-user-circle text-blue-600 text-2xl align-middle mr-2"></i>
-                                    {student.id} {student.name}님의 학습 결과
+                    <div className="min-h-screen bg-gray-100 p-4 flex flex-col items-center overflow-y-auto">
+                        <div className="max-w-4xl w-full space-y-4">
+                            <div className="bg-white p-6 rounded-2xl shadow text-center">
+                                <h2 className="text-2xl font-bold mb-4">{student.name}님의 성적 결과</h2>
+                                <div className="grid grid-cols-3 gap-4">
+                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                        <div className="text-gray-500 text-sm">현재 점수</div>
+                                        <div className="text-2xl font-bold">{stats.currentScore}</div>
+                                    </div>
+                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                        <div className="text-gray-500 text-sm">이전 평균</div>
+                                        <div className="text-2xl font-bold">{stats.canCalculate ? stats.baseScore : '-'}</div>
+                                    </div>
+                                    <div className="p-4 bg-blue-600 text-white rounded-lg">
+                                        <div className="text-blue-100 text-sm">STAD 점수</div>
+                                        <div className="text-2xl font-bold">{stats.canCalculate ? stats.stadScore : '진단중'}</div>
+                                    </div>
                                 </div>
-                                <button onClick={generateQuestions} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition flex items-center">
-                                    <i className="fas fa-sync-alt mr-2"></i> 다음 10문제 풀기 (무한 생성)
-                                </button>
+                                <button onClick={generateQuestions} className="mt-6 bg-blue-600 text-white px-6 py-2 rounded-lg font-bold">다시 풀기</button>
                             </div>
-
-                            {/* STAD Statistics Cards */}
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div className="bg-white p-6 rounded-2xl shadow text-center border-t-4 border-gray-400">
-                                    <p className="text-gray-500 font-medium mb-1">기본 점수 (이전 평균)</p>
-                                    <h3 className="text-3xl font-black text-gray-700">
-                                        {stats.canCalculate ? `${stats.baseScore}점` : '-'}
-                                    </h3>
-                                    {!stats.canCalculate && <p className="text-xs text-gray-400 mt-2">1회 더 풀어야 산출됩니다.</p>}
-                                </div>
-                                
-                                <div className="bg-white p-6 rounded-2xl shadow text-center border-t-4 border-blue-500">
-                                    <p className="text-blue-500 font-medium mb-1">이번 퀴즈 점수</p>
-                                    <h3 className="text-3xl font-black text-blue-700">{currentScore}점</h3>
-                                    {stats.canCalculate && (
-                                        <p className={`text-sm font-bold mt-2 ${stats.diff > 0 ? 'text-green-500' : stats.diff < 0 ? 'text-red-500' : 'text-gray-500'}`}>
-                                            {stats.diff > 0 ? `+${stats.diff} 향상!` : stats.diff < 0 ? `${stats.diff} 하락` : '유지'}
-                                        </p>
-                                    )}
-                                </div>
-
-                                <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-6 rounded-2xl shadow text-center text-white">
-                                    <p className="font-medium mb-1 opacity-90">STAD 향상 점수</p>
-                                    <h3 className="text-3xl font-black">
-                                        {stats.canCalculate ? `${stats.stadScore}점` : '진단중'}
-                                    </h3>
-                                    {stats.canCalculate && (
-                                        <p className="text-xs mt-2 opacity-80">팀 점수에 기여하는 점수입니다!</p>
-                                    )}
-                                </div>
-                            </div>
-
-                            {!stats.canCalculate && (
-                                <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded text-blue-700">
-                                    <i className="fas fa-info-circle mr-2"></i>
-                                    향상 점수(STAD 모형)를 확인하려면 상단의 <b>'다음 10문제 풀기'</b> 버튼을 눌러 <b>반드시 2회 이상</b> 풀어주세요. 첫 번째 퀴즈는 기준 점수가 됩니다.
-                                </div>
-                            )}
-
-                            {/* Detailed Review Section */}
-                            <div className="bg-white rounded-2xl shadow overflow-hidden mt-8">
-                                <div className="bg-gray-800 text-white p-4 font-bold flex items-center">
-                                    <i className="fas fa-tasks mr-2"></i> 문제 풀이 결과 및 오답 노트
-                                </div>
-                                <div className="divide-y divide-gray-200">
-                                    {questions.map((q, idx) => {
-                                        const isCorrect = userAnswers[idx] === q.answerIndex;
-                                        return (
-                                            <div key={idx} className="p-6 md:p-8 hover:bg-gray-50 transition">
-                                                <div className="flex items-start mb-4">
-                                                    <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold text-white mr-4 mt-1 ${isCorrect ? 'bg-green-500' : 'bg-red-500'}`}>
-                                                        {isCorrect ? <i className="fas fa-check"></i> : <i className="fas fa-times"></i>}
-                                                    </div>
-                                                    <div>
-                                                        <span className="inline-block bg-gray-200 text-gray-700 text-xs px-2 py-1 rounded font-bold mb-2">{q.type}</span>
-                                                        <h4 className="text-lg font-bold text-gray-800">Q{idx + 1}. {q.question}</h4>
-                                                    </div>
-                                                </div>
-
-                                                <div className="ml-12 space-y-2 mb-4">
-                                                    {q.options.map((opt, optIdx) => {
-                                                        let optionClass = "p-3 rounded-lg border ";
-                                                        let icon = null;
-                                                        
-                                                        if (optIdx === q.answerIndex) {
-                                                            optionClass += "bg-green-100 border-green-500 text-green-800 font-bold";
-                                                            icon = <i className="fas fa-check-circle mr-2 text-green-600"></i>;
-                                                        } else if (optIdx === userAnswers[idx] && !isCorrect) {
-                                                            optionClass += "bg-red-100 border-red-500 text-red-800 font-bold";
-                                                            icon = <i className="fas fa-times-circle mr-2 text-red-600"></i>;
-                                                        } else {
-                                                            optionClass += "bg-gray-50 border-gray-200 text-gray-600";
-                                                            icon = <span className="inline-block w-4 mr-2"></span>;
-                                                        }
-
-                                                        return (
-                                                            <div key={optIdx} className={optionClass}>
-                                                                {icon} {optIdx + 1}. {opt}
-                                                                {optIdx === userAnswers[idx] && <span className="ml-2 text-xs opacity-70">(내가 고른 답)</span>}
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-
-                                                <div className="ml-12 bg-blue-50 border border-blue-200 rounded-lg p-4">
-                                                    <h5 className="font-bold text-blue-800 mb-1"><i className="fas fa-chalkboard-teacher mr-2"></i>해설</h5>
-                                                    <p className="text-blue-900 text-sm leading-relaxed whitespace-pre-wrap">{q.explanation}</p>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
+                            <div className="bg-white p-6 rounded-2xl shadow space-y-6">
+                                {questions.map((q, idx) => (
+                                    <div key={idx} className="border-b pb-4">
+                                        <div className="font-bold mb-2">Q{idx+1}. {q.question}</div>
+                                        <div className="text-sm text-blue-600 bg-blue-50 p-3 rounded">정답: {q.options[q.answerIndex]}<br/>해설: {q.explanation}</div>
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     </div>
                 );
             }
-
             return null;
         };
 
